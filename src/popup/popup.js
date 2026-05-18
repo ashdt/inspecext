@@ -25,6 +25,7 @@ function renderStats(stats) {
 }
 
 function setStatus(text) { $('status').textContent = text; }
+function setPreview(text) { $('previewOut').textContent = text; }
 
 async function loadSettings() {
   const s = await chrome.storage.local.get({ includeLinks: true, observe: true });
@@ -43,6 +44,21 @@ $('scan').addEventListener('click', async () => {
     const res = await send('SCAN', { includeLinks: $('includeLinks').checked, observe: $('observe').checked });
     renderStats(res?.stats);
     setStatus(res?.message || 'Scan complete.');
+  } catch (e) { setStatus(e.message); }
+});
+
+$('preview').addEventListener('click', async () => {
+  try {
+    await saveSettings();
+    setStatus('Preparing preview…');
+    const res = await send('PREVIEW', { includeLinks: $('includeLinks').checked, maxRows: 5 });
+    const lines = (res?.previews || []).slice(0, 3).map((p, i) => {
+      const sample = p.sampleRows?.[0] || [];
+      return `${i + 1}) ${p.name} [${p.type}] rows=${p.totalRows} conf=${p.confidence}%\n   cols: ${(p.headers || []).slice(0,6).join(' | ')}\n   sample: ${(sample || []).slice(0,6).join(' | ')}`;
+    });
+    setPreview(lines.length ? lines.join('\n\n') : 'No previewable datasets found.');
+    renderStats(res?.stats);
+    setStatus(res?.message || 'Preview ready.');
   } catch (e) { setStatus(e.message); }
 });
 

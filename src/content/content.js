@@ -282,6 +282,23 @@
           exported++;
         }
         sendResponse({ ok: true, stats: stats(), message: `Started ${exported} CSV export(s).` });
+      } else if (message.action === 'PREVIEW') {
+        if (!candidates.length) scanCandidates();
+        const includeLinks = message.payload?.includeLinks !== false;
+        const maxRows = Math.max(1, Math.min(20, Number(message.payload?.maxRows || 10)));
+        const previews = candidates.map((candidate) => {
+          const { headers, rows } = extractCandidate(candidate, includeLinks);
+          return {
+            id: candidate.id,
+            name: candidate.name || candidate.type,
+            type: candidate.type,
+            confidence: candidate.confidence,
+            totalRows: rows.length,
+            headers,
+            sampleRows: rows.slice(0, maxRows)
+          };
+        }).filter(p => p.totalRows > 0);
+        sendResponse({ ok: true, stats: stats(), previews, message: `Prepared preview for ${previews.length} dataset(s).` });
       } else if (message.action === 'REMOVE') {
         removeControls();
         candidates = [];
