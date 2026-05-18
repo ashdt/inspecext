@@ -1,12 +1,18 @@
-let latestScanByTab = new Map();
-
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg?.type === 'SCAN_RESULT') {
-    if (sender.tab?.id != null) latestScanByTab.set(sender.tab.id, msg.payload);
-  }
-  if (msg?.type === 'GET_LATEST_SCAN') {
-    const tabId = msg.tabId;
-    sendResponse({ scan: latestScanByTab.get(tabId) || null });
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === 'DOWNLOAD_CSV') {
+    const blob = new Blob([message.csv || ''], { type: 'text/csv;charset=utf-8' });
+    const reader = new FileReader();
+    reader.onload = () => {
+      chrome.downloads.download({
+        url: reader.result,
+        filename: message.filename || `table-export-${Date.now()}.csv`,
+        saveAs: true
+      }, (downloadId) => {
+        sendResponse({ ok: !chrome.runtime.lastError, downloadId, error: chrome.runtime.lastError?.message });
+      });
+    };
+    reader.onerror = () => sendResponse({ ok: false, error: 'Failed to prepare CSV download.' });
+    reader.readAsDataURL(blob);
     return true;
   }
 });
