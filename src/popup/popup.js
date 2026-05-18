@@ -1,88 +1,30 @@
+import { renderPreviewTable, toExcelHtml } from '../lib/preview.js';
+
 const $ = (id) => document.getElementById(id);
+let lastPreviews = [];
 
-async function getActiveTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  return tab;
+async function getActiveTab() { const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); return tab; }
+async function inject() { const tab = await getActiveTab(); await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['src/content/content.js'] }); return tab; }
+async function send(action, payload={}) { const tab = await inject(); return chrome.tabs.sendMessage(tab.id, { action, payload }); }
+const setStatus = (t) => $('status').textContent = t;
+const setPreview = (t) => $('previewOut').textContent = t;
+
+function renderStats(s={}){ $('count').textContent=s.total??0; $('native').textContent=s.native??0; $('aria').textContent=s.aria??0; $('divs').textContent=s.div??0; }
+
+function summarize(previews){
+  return (previews||[]).slice(0,3).map((p,i)=>`${i+1}) ${p.name} [${p.type}] rows=${p.totalRows} conf=${p.confidence}%`).join('\n\n') || 'No previewable datasets found.';
 }
 
-async function inject() {
-  const tab = await getActiveTab();
-  if (!tab?.id) throw new Error('No active tab found.');
-  await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['src/content.js'] });
-  return tab;
-}
+async function loadSettings(){ const s=await chrome.storage.local.get({includeLinks:true,observe:true}); $('includeLinks').checked=s.includeLinks; $('observe').checked=s.observe; }
+async function saveSettings(){ await chrome.storage.local.set({includeLinks:$('includeLinks').checked,observe:$('observe').checked}); }
 
-async function send(action, payload = {}) {
-  const tab = await inject();
-  return await chrome.tabs.sendMessage(tab.id, { action, payload });
-}
+$('scan').onclick = async ()=>{ try{ await saveSettings(); const r=await send('SCAN',{includeLinks:$('includeLinks').checked,observe:$('observe').checked}); renderStats(r?.stats); setStatus(r?.message||'Scan complete'); }catch(e){setStatus(e.message);} };
+$('preview').onclick = async ()=>{ try{ await saveSettings(); const r=await send('PREVIEW',{includeLinks:$('includeLinks').checked,maxRows:20}); lastPreviews=r?.previews||[]; renderStats(r?.stats); setPreview(summarize(lastPreviews)); $('modalContent').innerHTML=renderPreviewTable(lastPreviews); $('modal').classList.add('open'); setStatus(r?.message||'Preview ready'); }catch(e){setStatus(e.message);} };
+$('openTab').onclick = async ()=>{ const html = `<!doctype html><html><head><meta charset='utf-8'><title>inspecext preview</title></head><body>${renderPreviewTable(lastPreviews)}</body></html>`; const url='data:text/html;charset=utf-8,'+encodeURIComponent(html); await chrome.tabs.create({url}); };
+$('excel').onclick = async ()=>{ const html = toExcelHtml(lastPreviews); chrome.runtime.sendMessage({type:'DOWNLOAD_TEXT', content: html, filename: `inspecext-preview-${Date.now()}.xls`, mime: 'application/vnd.ms-excel;charset=utf-8'}); };
+$('exportAll').onclick = async ()=>{ try{const r=await send('EXPORT_ALL',{includeLinks:$('includeLinks').checked}); renderStats(r?.stats); setStatus(r?.message||'Export complete');}catch(e){setStatus(e.message);} };
+$('remove').onclick = async ()=>{ try{const r=await send('REMOVE'); renderStats(r?.stats); setStatus(r?.message||'Removed');}catch(e){setStatus(e.message);} };
+$('close').onclick = ()=> $('modal').classList.remove('open');
+$('search').oninput = ()=> $('modalContent').innerHTML = renderPreviewTable(lastPreviews, $('search').value);
 
-function renderStats(stats) {
-  $('count').textContent = stats?.total ?? '0';
-  $('native').textContent = stats?.native ?? '0';
-  $('aria').textContent = stats?.aria ?? '0';
-  $('divs').textContent = stats?.div ?? '0';
-}
-
-function setStatus(text) { $('status').textContent = text; }
-function setPreview(text) { $('previewOut').textContent = text; }
-
-async function loadSettings() {
-  const s = await chrome.storage.local.get({ includeLinks: true, observe: true });
-  $('includeLinks').checked = s.includeLinks;
-  $('observe').checked = s.observe;
-}
-
-async function saveSettings() {
-  await chrome.storage.local.set({ includeLinks: $('includeLinks').checked, observe: $('observe').checked });
-}
-
-$('scan').addEventListener('click', async () => {
-  try {
-    await saveSettings();
-    setStatus('Scanning page…');
-    const res = await send('SCAN', { includeLinks: $('includeLinks').checked, observe: $('observe').checked });
-    renderStats(res?.stats);
-    setStatus(res?.message || 'Scan complete.');
-  } catch (e) { setStatus(e.message); }
-});
-
-$('preview').addEventListener('click', async () => {
-  try {
-    await saveSettings();
-    setStatus('Preparing preview…');
-    const res = await send('PREVIEW', { includeLinks: $('includeLinks').checked, maxRows: 5 });
-    const lines = (res?.previews || []).slice(0, 3).map((p, i) => {
-      const sample = p.sampleRows?.[0] || [];
-      return `${i + 1}) ${p.name} [${p.type}] rows=${p.totalRows} conf=${p.confidence}%\n   cols: ${(p.headers || []).slice(0,6).join(' | ')}\n   sample: ${(sample || []).slice(0,6).join(' | ')}`;
-    });
-    setPreview(lines.length ? lines.join('\n\n') : 'No previewable datasets found.');
-    renderStats(res?.stats);
-    setStatus(res?.message || 'Preview ready.');
-  } catch (e) { setStatus(e.message); }
-});
-
-$('exportAll').addEventListener('click', async () => {
-  try {
-    await saveSettings();
-    setStatus('Exporting all detected tables…');
-    const res = await send('EXPORT_ALL', { includeLinks: $('includeLinks').checked });
-    renderStats(res?.stats);
-    setStatus(res?.message || 'Export complete.');
-  } catch (e) { setStatus(e.message); }
-});
-
-$('remove').addEventListener('click', async () => {
-  try {
-    setStatus('Removing injected controls…');
-    const res = await send('REMOVE');
-    renderStats(res?.stats);
-    setStatus(res?.message || 'Controls removed.');
-  } catch (e) { setStatus(e.message); }
-});
-
-(async () => {
-  const tab = await getActiveTab();
-  try { $('site').textContent = new URL(tab.url).hostname + ' · active tab only'; } catch {}
-  await loadSettings();
-})();
+(async()=>{ const tab=await getActiveTab(); try{$('site').textContent=new URL(tab.url).hostname+' · active tab only';}catch{} await loadSettings(); })();
